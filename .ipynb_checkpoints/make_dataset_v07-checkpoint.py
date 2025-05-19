@@ -350,7 +350,7 @@ class BagLoader:
                     # Show live playback if required       
                     if show:
                         depth_display = cv2.cvtColor(depth_image, cv2.COLOR_GRAY2BGR)
-                        image = np.hstack((depth_displa, rgb_image))
+                        image = np.hstack((depth_display, rgb_image))
                         self.playback(image=image, in_iter=True)
                     
             except Exception as e:
@@ -490,7 +490,7 @@ class BagLoader:
                 
     def playback(self, image=None, mode='depth', i='', in_iter=False):
         if mode == 'depth':
-            image = self.depth_image
+            image = self.depth_images
         elif mode == 'rgb':
             image = self.rgb_image
 
@@ -554,39 +554,37 @@ class ImageLoader:
         self.img_path = img_path
         self.name = os.path.basename(self.img_path)
         self.load_images()
-        
-        self.raw_images = Raw(self.images)
+        self.raw_images = Raw(self.rimg)
         
         self.bbx = None
         self.center = None
-        
         self.cimg = None
-        self.threshold_map = None
         
+        self.threshold_map = None
         self.depthmask = DepthMask()
         self.cropper = Crop()
 
     def load_images(self):
-        self.images = np.load(self.img_path)
-        print(f" Loaded {self.name} of {self.images.shape} as {self.images.dtype}")
+        self.rimg = np.load(self.img_path)
+        print(f" Loaded {self.name} of {self.rimg.shape} as {self.rimg.dtype}")
     
     def reset_data(self):
-        self.images = self.raw_images.value
+        self.rimg = self.raw_images.value
         self.bbx = None
-        self.center = None
-        self.depth = None
+        self.ctr = None
+        self.dpt = None
         self.cimg = None
         self.threshold_map = None
         print('Data reset!')
     
     def playback(self, compare=False):
-        for i, image in enumerate(self.images):
+        for i, image in enumerate(self.rimg):
             plt.clf()
             if compare:
                 image = np.hstack((image, self.raw[i]))
-                plt.title(f"<Masked, Raw> {i} of {len(self.images)}")
+                plt.title(f"<Masked, Raw> {i} of {len(self.rimg)}")
             else:
-                plt.title(f"Image {i} of {len(self.images)}")
+                plt.title(f"Image {i} of {len(self.rimg)}")
             plt.axis('off')
             plt.imshow(image)
             plt.show()
@@ -598,54 +596,79 @@ class ImageLoader:
                 plt.pause(0.1)
 
     def depth_mask(self, threshold=0.5, tmap=None):
-        self.images = self.depthmask(self.images, threshold, tmap)
+        self.rimg = self.depthmask(self.rimg, threshold, tmap)
+        return self.depthmask.threshold
         
     def threshold_depth(self, threshold=3000):
         print(f'Thresholding IMG within {threshold}...', end='')
-        self.images = np.clip(self.images, 0, threshold)
-        self.images = (self.images * (65535 / threshold)).astype(np.uint16)
+        self.rimg = np.clip(self.rimg, 0, threshold)
+        self.rimg = (self.rimg * (65535 / threshold)).astype(np.uint16)
         print('Done')
         
     def clear_excessive_depth(self, threshold=3000):
         print(f'Clearing depth > {threshold}...', end='')
-        self.images[self.images > threshold] = 0
+        self.rimg[self.rimg > threshold] = 0
         print('Done')
         
     def normalize_depth(self, threshold=3000):
         print(f'Normalizing depth by {threshold}...', end='')
-        self.images /= float(threshold)
+        self.rimg /= float(threshold)
         print('Done')
 
     def crop(self, min_area=0, cvt_bbx=True, show=False):
         print('Cropping...', end='')
-        self.bbx, self.center, self.depth, self.cimg = self.cropper(self.images, min_area, cvt_bbx, show)
+        self.bbx, self.ctr, self.dpt, self.cimg = self.cropper(self.rimg, min_area, cvt_bbx, show)
         print('Done')
         
-    def save_cropped(self):
-        print('Saving cropped...', end='')
-        np.save(f"{self.img_path.replace('rimg', 'cimg')}", self.cimg)
-        np.save(f"{self.img_path.replace('rimg', 'bbx')}", self.bbx)
-        np.save(f"{self.img_path.replace('rimg', 'ctr')}", self.center)
-        np.save(f"{self.img_path.replace('rimg', 'dpt')}", self.depth)
-        print('Done')
+    def export_trim(self):
+        ret = {
+            'rimg': self.rimg,
+            'cimg': self.cimg,
+            'bbx' : self.bbx,
+            'ctr' : self.ctr,
+            'dpt' : self.dpt
+        }
+        return ret
+    
+    def concat_trim(self, trimmed):
+        if not isinstance(trimmed, list):
+            trimmed = [trimmed]
+            
+        for trm in trimmed:
+            print(f"Current length = {len(self.rimg)}")
+            for item in ('rimg', 'cimg', 'bbx', 'ctr', 'dpt'):
+                setattr(self, item, np.concatenate((getattr(self, item), trm[item])))
+                
+        print(f"Current length = {len(self.rimg)}")
         
-    def save_images(self):
-        print('Saving images...', end='')
-        np.save(self.img_path, self.images)
-        print('Done')
+        
+    def save_images(self, save_path):
+        
+        for item in ('rimg', 'cimg', 'bbx', 'ctr', 'dpt'):
+            if getattr(self, item) is not None:
+                print(f'Saving {self.name} {item}...', end='')
+                np.save(os.path.join(save_path, self.name.replace('rimg', item)), getattr(self, item))
+                print('Done')
         
     def browse_images(self, bound=None):
+        
         if bound is not None:
             start, end = bound
             n = end - start
         else:
-            n = len(self.images)
+            n = len(self.rimg)
             start, end = 0, n
+            
+        if np.array_equal(self.raw_images.value[start:end], self.rimg[start:end]):
+            im = self.rimg[start:end]
+        else:
+            im = np.hstack((self.raw_images.value[start:end],
+                            self.rimg[start:end]))
+        
         def view_image(i):
-            # plt.imshow(self.images[start:end][i], cmap=plt.get_cmap('Blues'))
-            plt.imshow(np.hstack((self.raw_images.value[start:end][i], 
-                                 self.images[start:end][i])),
-                       cmap=plt.get_cmap('Blues'))
+            # plt.imshow(self.rimg[start:end][i], cmap=plt.get_cmap('Blues'))
+
+            plt.imshow(im[i], cmap=plt.get_cmap('Blues'))
             plt.title(f"Image {i} of {n}")
             plt.axis('off')
             plt.show()
@@ -1059,7 +1082,7 @@ class FilterCSIPD:
             self.phase: dict = {}
             self.filtered_csi: dict = {}
             for c in set(self.labels[subject].loc[:, 'csi'].values):
-                self.csi[c] = np.load(os.path.join(self.path, f'{c}-csi.npy'))[..., 0]
+                self.csi[c] = np.load(os.path.join(self.path, f'{c}-csim.npy'))[..., 0]
                 self.csitime[c] = np.load(os.path.join(self.path, f'{c}-csitime.npy')) * 1e3
                 self.phase[c] = np.zeros((self.csi[c].shape[0], 62), dtype=float)
                 self.filtered_csi[c] = self.csi[c].copy()
@@ -1097,3 +1120,37 @@ class FilterCSIPD:
                 print(f'DONE {ph} of shape {self.phase[ph].shape}')
                 np.save(os.path.join(self.path, f"{ph}-pd.npy"), self.phase[ph])
                 np.save(os.path.join(self.path, f"{ph}-csi.npy"), self.filtered_csi[ph])
+                
+                
+class CSI2ImageLoader:
+
+    def __init__(self, csi_path,  *args, **kwargs):
+        self.csi_path = csi_path
+        self.configs = pycsi.MyConfigs()
+        self.configs.tx_rate = 0x1c113
+        self.configs.ntx = 3
+        self.csi = self.load_csi()
+        self.processed_csi = np.zeros((len(self.csi.csi), 90), dtype=float)
+        self.filtered_csi = None
+
+    def load_csi(self):
+        csi = pycsi.MyCsi(self.configs, os.path.basename(self.csi_path), self.csi_path)
+        csi.load_data(remove_sm=True)
+        return csi
+    
+    @staticmethod
+    def calc_svd(csi):
+        U, S, Vh = np.linalg.svd(np.squeeze(csi), full_matrices=False)
+        first_columns_of_V = Vh.conj().T[:, 0]  # First column of V
+        # 30 * 3
+
+        first_columns_of_V = first_columns_of_V.reshape(1, -1) # 1 * 90
+        return first_columns_of_V
+    
+    def preprocess(self):
+        for i, csi in tqdm(enumerate(self.csi.csi), total=len(self.csi.csi)):
+            self.processed_csi[i] = self.calc_svd(csi)
+        
+    def save(self):
+        np.save(f"{self.csi_path.replace('csio', 'csi2image')}", self.processed_csi)
+        print(f"Saved {self.csi_path.replace('csio', 'csi2image')} of {self.processed_csi.shape}!")

@@ -350,7 +350,7 @@ class BagLoader:
                     # Show live playback if required       
                     if show:
                         depth_display = cv2.cvtColor(depth_image, cv2.COLOR_GRAY2BGR)
-                        image = np.hstack((depth_displa, rgb_image))
+                        image = np.hstack((depth_display, rgb_image))
                         self.playback(image=image, in_iter=True)
                     
             except Exception as e:
@@ -490,7 +490,7 @@ class BagLoader:
                 
     def playback(self, image=None, mode='depth', i='', in_iter=False):
         if mode == 'depth':
-            image = self.depth_image
+            image = self.depth_images
         elif mode == 'rgb':
             image = self.rgb_image
 

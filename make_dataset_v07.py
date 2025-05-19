@@ -490,9 +490,9 @@ class BagLoader:
                 
     def playback(self, image=None, mode='depth', i='', in_iter=False):
         if mode == 'depth':
-            image = self.depth_images
+            im = self.depth_images
         elif mode == 'rgb':
-            image = self.rgb_image
+            im = self.rgb_image
 
         def play(img):
             plt.clf()
@@ -510,7 +510,7 @@ class BagLoader:
             play(image)
         else:
             i = 0
-            for _image in image:
+            for _image in im:
                 play(_image)
                 i += 1
                 
